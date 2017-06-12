@@ -1,9 +1,9 @@
 import vtkSegmentationCorePython as vtkSegmentationCore
 import vtkSlicerSegmentationsModuleLogicPython as vtkSlicerSegmentationsModuleLogic
+from slicer import util
 from SegmentStatistics import SegmentStatisticsLogic
 
-import os, sys
-from os.path import join, getsize
+import os
 
 #--DEBUGGING--
 # import ptvsd
@@ -11,42 +11,88 @@ from os.path import join, getsize
 # ptvsd.wait_for_attach()
 # -----------
 
-# If the number of arguments provided is less than 1 (by default, the first argument is the script name), throw an error
-if len(sys.argv) < 2:
-	print("Error: no folder specified")
-	quit()
-# Otherwise, store the pathname provided as an argument
-else:
-	path = sys.argv[1]
-	print("Analyzing: ",path)
+class NrrdConverterLogic(object):
 
-# --Load master volumes--
-# Loop through directory given to find DICOM directories
-pathWalk = os.walk(path)
-dicomDirs = []
-for root, dirs, files in pathWalk:
-	for file in files:
-		if file.endswith(".dcm"):
-			dicomDirs.append(root)
+	def __init__(self, pathToDicoms, pathToConverter):
+		self.pathToDicoms = os.path.normpath(pathToDicoms)
+		self.converter = os.path.normpath(pathToConverter)
+		if not os.path.exists(self.pathToDicoms) or not os.path.exists(self.converter):
+			print("DICOMs or Converter does not exist")
+			quit()
 
-masterVolumeNode = slicer.util.loadVolume("C:\Users\Moselhy\Documents\Testing\pyruvate8001.nrrd",returnNode=True)[1]
+	# Loop through directory given to find DICOM directories
+	def getDicomDirs(self):
+		pathWalk = os.walk(self.pathToDicoms)
+		dicomDirs = []
+		for root, dirs, files in pathWalk:
+			for file in files:
+				if file.endswith(".dcm"):
+					dicomDirs.append(root)
+		return list(set(dicomDirs))
 
-# Load segmentation
-segmentNode = loadSegmentation("C:\\Users\\Moselhy\\Documents\\Segmentations\\54501_Segment.seg.nrrd",returnNode=True)[1]
+	def convertToNrrd(self):
+		dicomDirs = self.getDicomDirs()
+		convertedList = []
+		for dicomDir in dicomDirs:
+			# Specify the output nrrd file name as the directory name
+			nrrdFile = os.path.split(dicomDir)[1]
+			documentsDir = os.path.expanduser(r"~\\Documents")
+			outputFileName = documentsDir + "\\NrrdOutput\\" + nrrdFile + ".nrrd"
+			execString = "runner.bat " + self.converter + " --inputDicomDirectory " + dicomDir + " --outputVolume " + outputFileName
+			os.system(execString)
+			convertedList.append(outputFileName)
+		return convertedList
 
-# Compute statistics
-segStatLogic = SegmentStatisticsLogic()
-segStatLogic.computeStatistics(segmentNode, masterVolumeNode)
+class StatsCollectorLogic(object):
+	# Constructor to store the segmentation in the object definition
+	def __init__(self, segmentationFile):
+		self.segFile = os.path.normpath(segmentationFile)
+		self.segNode = util.loadSegmentation(self.segFile,returnNode=True)[1]
 
-# Export results to table
-resultsTableNode = slicer.vtkMRMLTableNode()
-slicer.mrmlScene.AddNode(resultsTableNode)
-segStatLogic.exportToTable(resultsTableNode)
-segStatLogic.showTable(resultsTableNode)
 
-# Export results to string
-logging.info(segStatLogic.exportToString())
+	def exportStats(self, segStatLogic, csvFileName, header=""):
+		outputFile = csvFileName
+		if not csvFileName.endswith('.csv'):
+			outputFile += '.csv'
 
-outputFilename = slicer.app.temporaryPath + '/SegmentStatisticsTestOutput.csv'
-delayDisplay("Export results to CSV file: "+outputFilename)
-segStatLogic.exportToCSVFile(outputFilename)
+		fp = open(outputFile, "a")
+		fp.write(header+'\n')
+		fp.write(segStatLogic.exportToString())
+		fp.write("\n")
+		fp.close()
+
+	def getStatForVol(self, volFile):
+		# --Load master volumes--
+		volNode = util.loadVolume(volFile,returnNode=True)[1]
+		if volNode is None:
+			print("Volume could not be loaded from: " + volFile)
+			quit()
+
+		# Compute statistics
+		segStatLogic = SegmentStatisticsLogic()
+		segStatLogic.computeStatistics(self.segNode, volNode)
+
+		# Export results to string
+		# logging.info(segStatLogic.exportToString())
+
+		# Export results to CSV file
+		# outputFile = csvFileName
+		# if not csvFileName.endswith('.csv'):
+		# 	outputFile += '.csv'
+		# segStatLogic.exportToCSVFile(outputFile)
+
+		csvFileName = volNode.GetName()
+		csvFilePath = os.path.normpath(os.path.expanduser(r"~\\Documents\\SegmentStatistics\\" + csvFileName))
+		self.exportStats(segStatLogic, csvFilePath, csvFileName)
+
+		return segStatLogic.exportToString()
+
+class MetaExporter(object):
+	def __init__(self, pathToDicoms, pathToConverter, segmentationFile):
+		self.converter = NrrdConverterLogic(pathToDicoms, pathToConverter)
+		self.sc = StatsCollectorLogic(segmentationFile)
+
+		# Get all stats
+		convertedList = self.converter.convertToNrrd()
+		for nrrd in convertedList:
+			self.sc.getStatForVol(nrrd)
