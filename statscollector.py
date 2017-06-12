@@ -1,15 +1,9 @@
-"""
-MAKE SURE THAT YOU ALWAYS PUT 'r' OR 'R' IN FRONT OF ANY PATH NAMES, SUCH AS 
-r"C:\testdata\54545Heart.seg.nrrd"
-or
-R"C:\testdata\54545Heart.seg.nrrd"
-"""
-
 import vtkSegmentationCorePython as vtkSegmentationCore
 import vtkSlicerSegmentationsModuleLogicPython as vtkSlicerSegmentationsModuleLogic
 from SegmentStatistics import SegmentStatisticsLogic
 
 import os, sys
+from os.path import join, getsize
 
 #--DEBUGGING--
 # import ptvsd
@@ -17,74 +11,42 @@ import os, sys
 # ptvsd.wait_for_attach()
 # -----------
 
-# # If the number of arguments provided is less than 1 (by default, the first argument is the script name), throw an error
-# if len(sys.argv) < 2:
-# 	print("Error: no folder specified")
-# 	quit()
-# # Otherwise, store the pathname provided as an argument
-# else:
-# 	path = sys.argv[1]
-# 	print("Analyzing: ",path)
+# If the number of arguments provided is less than 1 (by default, the first argument is the script name), throw an error
+if len(sys.argv) < 2:
+	print("Error: no folder specified")
+	quit()
+# Otherwise, store the pathname provided as an argument
+else:
+	path = sys.argv[1]
+	print("Analyzing: ",path)
 
-class NrrdConverterLogic(object):
+# --Load master volumes--
+# Loop through directory given to find DICOM directories
+pathWalk = os.walk(path)
+dicomDirs = []
+for root, dirs, files in pathWalk:
+	for file in files:
+		if file.endswith(".dcm"):
+			dicomDirs.append(root)
 
-	def __init__(self, pathToDicoms, pathToConverter):
-		self.pathToDicoms = os.path.normpath(pathToDicoms)
-		self.converter = os.path.normpath(pathToConverter)
-		if not os.path.exists(self.pathToDicoms) or not os.path.exists(self.converter):
-			print("DICOMs or Converter does not exist")
-			quit()
+masterVolumeNode = slicer.util.loadVolume("C:\Users\Moselhy\Documents\Testing\pyruvate8001.nrrd",returnNode=True)[1]
 
-	# Loop through directory given to find DICOM directories
-	def getDicomDirs(self):
-		pathWalk = os.walk(self.pathToDicoms)
-		dicomDirs = []
-		for root, dirs, files in pathWalk:
-			for file in files:
-				if file.endswith(".dcm"):
-					dicomDirs.append(root)
-		return list(set(dicomDirs))
+# Load segmentation
+segmentNode = loadSegmentation("C:\\Users\\Moselhy\\Documents\\Segmentations\\54501_Segment.seg.nrrd",returnNode=True)[1]
 
-	def convertToNrrd(self):
-		dicomDirs = self.getDicomDirs()
-		for dicomDir in dicomDirs:
-			# Specify the output nrrd file name as the directory name
-			nrrdFile = os.path.split(dicomDir)[1]
-			documentsDir = os.path.expanduser(r"~\\Documents")
-			execString = "runner.bat " + self.converter + " --inputDicomDirectory " + dicomDir + " --outputVolume " + documentsDir + "\\NrrdOutput\\" + nrrdFile + ".nrrd"
-			os.system(execString)
+# Compute statistics
+segStatLogic = SegmentStatisticsLogic()
+segStatLogic.computeStatistics(segmentNode, masterVolumeNode)
 
+# Export results to table
+resultsTableNode = slicer.vtkMRMLTableNode()
+slicer.mrmlScene.AddNode(resultsTableNode)
+segStatLogic.exportToTable(resultsTableNode)
+segStatLogic.showTable(resultsTableNode)
 
-class StatsCollectorLogic(object):
-	# Constructor to store the segmentation in the object definition
-	def __init__(self, segmentationFile):
-		self.segFile = os.path.normpath(segmentationFile)
-		self.segNode = loadSegmentation(self.segFile,returnNode=True)[1]
+# Export results to string
+logging.info(segStatLogic.exportToString())
 
-	def getStatForVol(self, volFile, csvFileName):
-		# --Load master volumes--
-		volNode = slicer.util.loadVolume(volFile,returnNode=True)[1]
-
-		# Compute statistics
-		segStatLogic = SegmentStatisticsLogic()
-		segStatLogic.computeStatistics(self.segNode, volNode)
-
-		# Export results to string
-		# logging.info(segStatLogic.exportToString())
-
-		# Export results to CSV file
-		outputFile = csvFileName
-		if not csvFileName.endswith('.csv'):
-			outputFile += '.csv'
-		segStatLogic.exportToCSVFile(outputFile)
-
-		return segStatLogic.exportToString()
-
-	def exportStats(self, segStatLogic, csvFileName, header=""):
-		fp = open(csvFileName, "a")
-		fp.write(header)
-	    fp.write(segStatLogic.exportToString(nonEmptyKeysOnly))
-	    fp.close()
-
-    def exportAllStats(self, converterLogic, csvFileName):
-    	
+outputFilename = slicer.app.temporaryPath + '/SegmentStatisticsTestOutput.csv'
+delayDisplay("Export results to CSV file: "+outputFilename)
+segStatLogic.exportToCSVFile(outputFilename)
