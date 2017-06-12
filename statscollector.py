@@ -1,8 +1,8 @@
 import vtkSegmentationCorePython as vtkSegmentationCore
 import vtkSlicerSegmentationsModuleLogicPython as vtkSlicerSegmentationsModuleLogic
-from slicer import util
+import slicer
 from SegmentStatistics import SegmentStatisticsLogic
-
+import logging
 import os
 
 #--DEBUGGING--
@@ -28,26 +28,38 @@ class NrrdConverterLogic(object):
 			for file in files:
 				if file.endswith(".dcm"):
 					dicomDirs.append(root)
-		return list(set(dicomDirs))
+		noDuplicates = list(set(dicomDirs))
+		noDuplicates.sort()
+		return noDuplicates
 
 	def convertToNrrd(self):
 		dicomDirs = self.getDicomDirs()
-		convertedList = []
+        # TEMP - CHANGE NAME
+		dcmDictionary = {}
 		for dicomDir in dicomDirs:
 			# Specify the output nrrd file name as the directory name
 			nrrdFile = os.path.split(dicomDir)[1]
-			documentsDir = os.path.expanduser(r"~\\Documents")
-			outputFileName = documentsDir + "\\NrrdOutput\\" + nrrdFile + ".nrrd"
-			execString = "runner.bat " + self.converter + " --inputDicomDirectory " + dicomDir + " --outputVolume " + outputFileName
+			parentDir = os.path.split(os.path.split(dicomDir)[0])
+			# This is the directory above the directory containing the DICOMs (e.g. if PyBy6/8001/x.dcm then this is PyBy6) 
+			folderName = parentDir[1]
+			grandParentDir = os.path.split(parentDir[0])[1]
+			documentsDir = os.path.normpath(os.path.expanduser(r"~\\Documents\\StatsCollector\\NrrdOutput"))
+			if not os.path.exists(documentsDir):
+				os.mkdir(documentsDir)
+			outputFileName = os.path.normpath(documentsDir + "\\" + grandParentDir + "-" + folderName + "_" + nrrdFile + ".nrrd")
+			runnerPath = os.path.split(self.converter)[0] + '\\runner.bat'
+			execString = runnerPath + " " + self.converter + " --inputDicomDirectory " + dicomDir + " --outputVolume " + outputFileName
 			os.system(execString)
-			convertedList.append(outputFileName)
-		return convertedList
+			if not dcmDictionary.has_key(folderName):
+				dcmDictionary[folderName] = []
+			dcmDictionary[folderName].append(outputFileName)
+		return dcmDictionary
 
 class StatsCollectorLogic(object):
 	# Constructor to store the segmentation in the object definition
 	def __init__(self, segmentationFile):
 		self.segFile = os.path.normpath(segmentationFile)
-		self.segNode = util.loadSegmentation(self.segFile,returnNode=True)[1]
+		self.segNode = slicer.util.loadSegmentation(self.segFile,returnNode=True)[1]
 
 
 	def exportStats(self, segStatLogic, csvFileName, header=""):
@@ -61,9 +73,9 @@ class StatsCollectorLogic(object):
 		fp.write("\n")
 		fp.close()
 
-	def getStatForVol(self, volFile):
+	def getStatForVol(self, volFile, csvFileName):
 		# --Load master volumes--
-		volNode = util.loadVolume(volFile,returnNode=True)[1]
+		volNode = slicer.util.loadVolume(volFile,returnNode=True)[1]
 		if volNode is None:
 			print("Volume could not be loaded from: " + volFile)
 			quit()
@@ -72,18 +84,11 @@ class StatsCollectorLogic(object):
 		segStatLogic = SegmentStatisticsLogic()
 		segStatLogic.computeStatistics(self.segNode, volNode)
 
-		# Export results to string
-		# logging.info(segStatLogic.exportToString())
-
-		# Export results to CSV file
-		# outputFile = csvFileName
-		# if not csvFileName.endswith('.csv'):
-		# 	outputFile += '.csv'
-		# segStatLogic.exportToCSVFile(outputFile)
-
-		csvFileName = volNode.GetName()
-		csvFilePath = os.path.normpath(os.path.expanduser(r"~\\Documents\\SegmentStatistics\\" + csvFileName))
-		self.exportStats(segStatLogic, csvFilePath, csvFileName)
+		documentsDir = os.path.normpath(os.path.expanduser(r"~\\Documents\\StatsCollector\\SegmentStatistics"))
+		if not os.path.exists(documentsDir):
+			os.mkdir(documentsDir)
+		csvFilePath = os.path.normpath(documentsDir + "\\" + csvFileName)
+		self.exportStats(segStatLogic, csvFilePath, volNode.GetName())
 
 		return segStatLogic.exportToString()
 
@@ -93,6 +98,7 @@ class MetaExporter(object):
 		self.sc = StatsCollectorLogic(segmentationFile)
 
 		# Get all stats
-		convertedList = self.converter.convertToNrrd()
-		for nrrd in convertedList:
-			self.sc.getStatForVol(nrrd)
+		dcmDictionary = self.converter.convertToNrrd()
+		for folderName, nrrdList in dcmDictionary.items():
+			for nrrd in nrrdList:
+				self.sc.getStatForVol(nrrd, folderName)
