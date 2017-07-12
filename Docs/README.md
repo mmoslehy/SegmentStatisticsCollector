@@ -1,4 +1,4 @@
-![#f03c15](https://placehold.it/15/f03c15/000000?text=+)
+![#f03c15](https://placehold.it/15/f03c15/000000?text=aasdfa+)
 <p style='color:red'>This version is deprecated, please use <a href="https://github.com/mmoslehy/HyperpolarizedSegmentStats">the new repository here</a></p>
 
 # SegmentStatisticsCollector
